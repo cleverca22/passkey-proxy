@@ -1,0 +1,4 @@
+.direnv/*
+*.swp
+db.sqlite
+passkey-proxy/target
