@@ -1,13 +1,102 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _,engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::{Deserialize, Deserializer, de};
-use sqlite::{BindableWithIndex, Statement, ParameterIndex, Connection, ReadableWithIndex, ColumnIndex};
+use core::net::IpAddr;
+use rusqlite::OptionalExtension;
+use rusqlite::types::ToSqlOutput::Owned;
+use rusqlite::types::Value::Text;
+use rusqlite::{Connection,ToSql,types::{ToSqlOutput,FromSql,ValueRef,FromSqlError,FromSqlResult}};
+use serde::{Serialize,Deserialize, Deserializer, de};
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt;
+use std::io::{Cursor, Read};
+use std::io;
+use std::sync::{Arc,Mutex};
 use uuid::Uuid;
+
+#[derive(Deserialize,Debug)]
+pub struct AuthenticatorAssertionResponse {
+  #[serde(rename = "authenticatorData")]
+  pub authenticator_data: Base64Bytes,
+  #[serde(rename = "clientDataJSON")]
+  pub client_data_json: Base64Bytes,
+
+  pub signature: Base64Bytes,
+  // ASN.1 DER
+}
+
+#[derive(Deserialize,Debug)]
+pub struct AuthAttempt {
+  #[serde(rename = "authenticatorAttachment")]
+  pub authenticator_attachment: String,
+  pub id: Base64Bytes,
+  pub response: AuthenticatorAssertionResponse,
+}
+
+// TODO, add creation timestamp, and reject old tokens
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CookieClaims {
+  pub client_ip: IpAddr,
+  pub exp: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChallengeClaims {
+  pub client_ip: IpAddr,
+  pub exp: u64,
+}
+
+#[derive(Debug)]
+pub struct AttestedCredentialData {
+  pub aaguid: AaGuid,
+  pub credential_id: CredentialId,
+  pub credential_public_key: ciborium::Value,
+}
+
+#[derive(Debug)]
+pub struct AuthData {
+  pub rp_id_hash: Sha256Hash,
+  pub flags: AuthDataFlags,
+  pub sign_count: u32, // initial sequence counter
+  pub attested_credential_data: Option<AttestedCredentialData>,
+  pub rest: Vec<u8>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct AuthResult {
+  pub success: bool,
+  pub msg: Option<String>,
+}
+
+#[derive(Deserialize,Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientData {
+  r#type: String,
+  challenge: Base64Bytes,
+  origin: String,
+  cross_origin: bool,
+}
+
+pub struct CredentialId(pub Vec<u8>);
+
+impl Debug for CredentialId {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let encoded = hex::encode(self.0.clone());
+    write!(f, "{}", encoded)
+  }
+}
 
 #[derive(Clone)]
 pub struct Base64Bytes(Vec<u8>);
+
+impl <'de> Deserialize<'de> for AuthData {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    let f: Vec<u8> = Vec::deserialize(deserializer)?;
+    auth_data_from_vec(f).map_err(serde::de::Error::custom)
+  }
+}
 
 impl Debug for Base64Bytes {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -34,17 +123,21 @@ impl Display for Base64Bytes {
   }
 }
 
-impl BindableWithIndex for Base64Bytes {
-  fn bind<T: ParameterIndex>(self, stat: &mut Statement<'_>, index: T) -> Result<(), sqlite::Error>{
+impl ToSql for Base64Bytes {
+  fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
     let encoded = BASE64_STANDARD.encode(&self.0);
-    stat.bind((index, encoded.as_str()))
+    Ok(Owned(Text(encoded)))
   }
 }
 
-impl ReadableWithIndex for Base64Bytes {
-  fn read<T: ColumnIndex>(stat: &Statement<'_>, index: T) -> Result<Base64Bytes, sqlite::Error> {
-    let base64 = stat.read::<String,_>(index).unwrap();
-    Ok(Base64Bytes(BASE64_STANDARD.decode(base64).unwrap()))
+impl FromSql for Base64Bytes {
+  fn column_result(value: ValueRef<'_>) -> FromSqlResult<Base64Bytes> {
+    match value {
+      ValueRef::Text(t) => {
+        Ok(Base64Bytes(BASE64_STANDARD.decode(t).map_err(|e| FromSqlError::Other(Box::new(e)))?))
+      }
+      _ => Err(rusqlite::types::FromSqlError::InvalidType)
+    }
   }
 }
 
@@ -83,11 +176,24 @@ pub struct AuthenticatorAttestationResponse {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Register {
-  #[serde(rename = "authenticatorAttachment")]
   pub authenticator_attachment: String,
   pub id: Base64Bytes,
   pub response: AuthenticatorAttestationResponse,
+}
+
+#[derive(Serialize, Debug)]
+pub struct RegisterReply {
+  pub msg: Option<&'static str>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Attestation {
+  fmt: String,
+  att_stmt: ciborium::value::Value,
+  auth_data: AuthData,
 }
 
 pub struct Sha256Hash(pub Vec<u8>);
@@ -128,12 +234,28 @@ impl Debug for AaGuid {
 }
 
 pub fn get_db() -> Connection {
-  let db = sqlite::open("db.sqlite").unwrap();
+  let db = Connection::open("db.sqlite").unwrap();
   let query = "
     CREATE TABLE IF NOT EXISTS passkeys (id, publicKey, publicKeyAlgorithm, attestationObject, transports);
   ";
-  db.execute(query).unwrap();
+  db.execute(query,[]).unwrap();
   db
+}
+
+#[derive(Clone)]
+pub struct DbHandleExtension(pub Arc<Mutex<DbHandle>>);
+
+pub struct DbHandle {
+  pub conn: Connection,
+}
+
+impl DbHandle {
+  pub fn open() -> DbHandle {
+    let conn = get_db();
+    DbHandle {
+      conn
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -143,16 +265,68 @@ pub struct PassKey {
 }
 
 impl PassKey {
-  pub fn getById(id: &Base64Bytes) -> Option<PassKey> {
+  pub fn get_by_id(id: &Base64Bytes) -> rusqlite::Result<Option<PassKey>> {
     let conn = get_db();
-    let mut stat = conn.prepare("SELECT publicKey, publicKeyAlgorithm FROM passkeys WHERE id = ?").unwrap();
-    stat.bind((1, id.clone())).unwrap();
-    stat.next().unwrap();
-    let public_key = stat.read::<Base64Bytes,_>(0).unwrap();
-    let public_key_algorithm = stat.read::<i64,_>(1).unwrap();
-    Some(PassKey {
-      public_key,
-      public_key_algorithm,
-    })
+    let mut stat = conn.prepare_cached("SELECT publicKey, publicKeyAlgorithm FROM passkeys WHERE id = ?").unwrap();
+    stat.query_row([id], |row| {
+      let public_key: Base64Bytes = row.get(0)?;
+      let public_key_algorithm: i64 = row.get(1)?;
+      Ok(PassKey { public_key, public_key_algorithm })
+    }).optional()
   }
+}
+
+pub fn auth_data_from_vec(f: Vec<u8>) -> io::Result<AuthData> {
+  let mut cursor = Cursor::new(f.clone());
+  let mut hash = vec![0u8; 32];
+  cursor.read_exact(&mut hash)?;
+  let flags: u8 = read_u8(&mut cursor)?;
+  let sign_count = read_be_u32(&mut cursor)?;
+
+  let attested_credential_data: Option<AttestedCredentialData>;
+  if flags & (1<<6) != 0 {
+    let mut aaguid = vec![0u8;16];
+    cursor.read_exact(&mut aaguid)?;
+    let credential_id_len = read_be_u16(&mut cursor)?.into();
+    let mut credential_id = vec![0u8; credential_id_len];
+    cursor.read_exact(&mut credential_id)?;
+
+    let pk_value: ciborium::Value = ciborium::from_reader(&mut cursor)
+      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    attested_credential_data = Some(AttestedCredentialData {
+      aaguid: AaGuid(aaguid.to_vec()),
+      credential_id: CredentialId(credential_id.to_vec()),
+      credential_public_key: pk_value,
+    });
+  } else {
+    attested_credential_data = None;
+  }
+  let mut rest: Vec<u8> = Vec::new();
+  cursor.read_to_end(&mut rest).unwrap();
+  Ok(AuthData {
+    rp_id_hash: Sha256Hash(hash),
+    flags: AuthDataFlags(flags),
+    sign_count,
+    attested_credential_data,
+    rest,
+  })
+}
+
+fn read_u8<T>(cursor: &mut Cursor<T>) -> io::Result<u8> where T: AsRef<[u8]> {
+  let mut buf = vec![0u8; 1];
+  cursor.read_exact(&mut buf)?;
+  Ok(buf[0])
+}
+
+fn read_be_u16<T>(cursor: &mut Cursor<T>) -> io::Result<u16> where T: AsRef<[u8]> {
+  let mut buf = vec![0u8; 2];
+  cursor.read_exact(&mut buf)?;
+  Ok(u16::from_be_bytes(buf.try_into().unwrap()))
+}
+
+fn read_be_u32<T>(cursor: &mut Cursor<T>) -> io::Result<u32> where T: AsRef<[u8]> {
+  let mut buf = vec![0u8; 4];
+  cursor.read_exact(&mut buf)?;
+  Ok(u32::from_be_bytes(buf.try_into().unwrap()))
 }

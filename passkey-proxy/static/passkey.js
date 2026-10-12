@@ -3,38 +3,7 @@
 // better error handling
 // better UI?
 
-const challenge = Uint8Array.fromHex("cafed01d");
 const userid = Uint8Array.fromHex("cafed00d");
-const pubkey = {
-  //attestation: "direct",
-  challenge: challenge.buffer,
-  pubKeyCredParams: [
-    {
-      // chrome on a pixel10 only supports this one
-      alg: -7, // ES256
-      type: "public-key"
-    },
-    {
-      alg: -257, // RS256
-      type: "public-key"
-    },
-    {
-      alg: -8, // EdDSA
-      type: "public-key"
-    },
-  ],
-  requireResidentKey: true,
-  residentKey: "required", // store the generated private in the passkey
-  rp: {
-    id: "earthtools.ca",
-    name: "earth tools passkey test"
-  },
-  user: {
-    displayName: "user name",
-    id: userid.buffer,
-    name: "user_name"
-  }
-};
 
 function tob64(buffer) {
   const arr = new Uint8Array(buffer);
@@ -80,11 +49,50 @@ function showError(error) {
   msg.innerText = error;
 }
 
+async function get_new_challenge() {
+  let obj = await asyncFetch("/passkey/gen_challenge");
+  return obj.token;
+}
+
 async function createPasskey() {
   if (!window.PublicKeyCredential) return showError("cant create, not supported");
 
+  let enc = new TextEncoder();
+  let challenge = enc.encode(await get_new_challenge());
+  console.log(challenge);
+
   const options = {
-    publicKey: pubkey
+    publicKey: {
+      //attestation: "direct",
+      challenge: challenge.buffer,
+      pubKeyCredParams: [
+        {
+          // chrome on a pixel10 supports this one
+          alg: -7, // ES256
+          type: "public-key"
+        },
+        {
+          alg: -257, // RS256
+          type: "public-key"
+        },
+        {
+          // yubikey only supports this one
+          alg: -8, // EdDSA
+          type: "public-key"
+        },
+      ],
+      requireResidentKey: true,
+      residentKey: "required", // store the generated private in the passkey
+      rp: {
+        id: "earthtools.ca",
+        name: "earth tools passkey test"
+      },
+      user: {
+        displayName: "user name",
+        id: userid.buffer,
+        name: "user_name"
+      }
+    }
   };
   let credential = await navigator.credentials.create(options);
   console.log(credential);
@@ -101,6 +109,9 @@ async function getCredentials() {
   if (!window.PublicKeyCredential) return showError("cant get, not supported");
 
   let list = await asyncFetch("/passkey/get_all");
+  let enc = new TextEncoder();
+  let challenge = enc.encode(await get_new_challenge());
+  console.log(challenge);
   console.log(list);
   let options = {
     publicKey: {

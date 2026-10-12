@@ -7,6 +7,7 @@
   flake-utils.lib.eachDefaultSystem (system: let
     pkgs = import nixpkgs { inherit system; };
   in {
+    packages.default = pkgs.callPackage ./passkey-proxy {};
     devShells.default = pkgs.mkShell {
       buildInputs = with pkgs; [
         rustc
