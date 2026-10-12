@@ -94,15 +94,19 @@ async function createPasskey() {
       }
     }
   };
-  let credential = await navigator.credentials.create(options);
-  console.log(credential);
-  console.log(credential.toJSON());
-  let obj = credential.toJSON();
-  let str = JSON.stringify(obj);
-  console.log(str);
-  await asyncPost("/passkey/register", obj);
-  let msg = document.getElementById("message");
-  msg.innerText = `created a passkey with ID ${credential.id}`;
+  try {
+    let credential = await navigator.credentials.create(options);
+    console.log(credential);
+    console.log(credential.toJSON());
+    let obj = credential.toJSON();
+    let str = JSON.stringify(obj);
+    console.log(str);
+    await asyncPost("/passkey/register", obj);
+    let msg = document.getElementById("message");
+    msg.innerText = `created a passkey with ID ${credential.id}`;
+  } catch (e) {
+    showError(e);
+  }
 }
 
 async function getCredentials() {
@@ -124,21 +128,25 @@ async function getCredentials() {
     }
   };
   console.log(options);
-  let credential = await navigator.credentials.get(options);
-  console.log(credential);
-  let obj = credential.toJSON();
-  let msg = document.getElementById("message");
-  msg.innerText = `got a passkey with ID ${credential.id}`;
-  let response = await asyncPost("/passkey/auth_attempt", obj);
-  if (response.success) {
-    let rd = new URLSearchParams(window.location.search).get("rd");
-    let rd_url = new URL(rd);
-    console.log(rd);
-    if (rd_url.host == window.location.host) {
-      window.location = rd;
-    } else {
-      window.location = "/";
+  try {
+    let credential = await navigator.credentials.get(options);
+    console.log(credential);
+    let obj = credential.toJSON();
+    let msg = document.getElementById("message");
+    msg.innerText = `got a passkey with ID ${credential.id}`;
+    let response = await asyncPost("/passkey/auth_attempt", obj);
+    if (response.success) {
+      let rd = new URLSearchParams(window.location.search).get("rd");
+      let rd_url = new URL(rd);
+      console.log(rd);
+      if (rd_url.host == window.location.host) {
+        window.location = rd;
+      } else {
+        window.location = "/";
+      }
     }
+  } catch (e) {
+    showError(e);
   }
 }
 

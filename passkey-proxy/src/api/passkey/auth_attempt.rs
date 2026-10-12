@@ -1,29 +1,19 @@
+use axum::Extension;
 use axum::extract::Json;
 use axum::http::StatusCode;
 use axum_client_ip::XRealIp;
-use axum_cookie::prelude::{Cookie,CookieManager};
+use axum_cookie::prelude::{CookieManager};
 use core::net::IpAddr;
-use crate::types::{AuthAttempt,AuthResult,PassKey,AuthData,auth_data_from_vec,ClientData,CookieClaims};
-use jsonwebtoken::{EncodingKey,Header,encode,get_current_timestamp};
+use crate::api::passkey::util::gen_new_jwt_cookie;
+use crate::types::{AuthAttempt,AuthResult,PassKey,AuthData,auth_data_from_vec,ClientData,PassKeyProxyState};
+use jsonwebtoken::{EncodingKey};
 use sha2::{Sha256,Digest};
 use std::io;
 use std::time::Duration;
 
-fn auth_success(ip: IpAddr, cookie: CookieManager) -> (StatusCode, Json<AuthResult>) {
-  let secret = "hunter2";
-  let key = EncodingKey::from_secret(secret.as_ref());
-  let claims = CookieClaims {
-    client_ip: ip,
-    exp: get_current_timestamp() + 3600,
-  };
-  let token = encode(&Header::default(), &claims, &key).unwrap();
-  println!("token: {0:#?}\n", token);
+fn auth_success(ip: IpAddr, cookie: CookieManager, encoding_key: &EncodingKey, cookie_ttl: Duration) -> (StatusCode, Json<AuthResult>) {
+  let session = gen_new_jwt_cookie(ip, &encoding_key, cookie_ttl);
 
-  let session = Cookie::new("session", token)
-    .with_path("/")
-    .with_http_only(true)
-    .with_max_age(Duration::from_secs(3600 * 24 * 7 * 2))
-    .with_secure(true);
   cookie.add(session);
   (StatusCode::OK, Json(AuthResult { success: true, msg: None }))
 }
@@ -32,7 +22,7 @@ fn auth_fail(msg: &str) -> (StatusCode, Json<AuthResult>) {
   (StatusCode::OK, Json(AuthResult { success: false, msg: Some(msg.to_string()) }))
 }
 
-pub async fn route(XRealIp(ip): XRealIp, cookie: CookieManager, Json(payload): Json<AuthAttempt>) -> (StatusCode, Json<AuthResult>) {
+pub async fn route(Extension(state): Extension<PassKeyProxyState>, XRealIp(ip): XRealIp, cookie: CookieManager, Json(payload): Json<AuthAttempt>) -> (StatusCode, Json<AuthResult>) {
   let passkey: PassKey = match PassKey::get_by_id(&payload.id) {
     Ok(Some(pk)) => pk,
     Ok(None) => {
@@ -74,7 +64,7 @@ pub async fn route(XRealIp(ip): XRealIp, cookie: CookieManager, Json(payload): J
       let result = crate::p256::verify_sig(passkey.public_key.get_vec(), message, payload.response.signature.get_vec());
       println!("sig result: {0:#?}", result);
       match result {
-        Some(true) => auth_success(ip, cookie),
+        Some(true) => auth_success(ip, cookie, &state.encoding_key, state.cookie_ttl),
         Some(false) => auth_fail("sig check fail"),
         None => auth_fail("cant parse pk or sig"),
       }
@@ -82,7 +72,7 @@ pub async fn route(XRealIp(ip): XRealIp, cookie: CookieManager, Json(payload): J
     -8 => {
       let result = crate::ed25519::verify_sig(passkey.public_key.get_vec(), message, payload.response.signature.get_vec());
       match result {
-        Some(true) => auth_success(ip, cookie),
+        Some(true) => auth_success(ip, cookie, &state.encoding_key, state.cookie_ttl),
         Some(false) => auth_fail("sig check fail"),
         None => auth_fail("cant parse pk or sig"),
       }

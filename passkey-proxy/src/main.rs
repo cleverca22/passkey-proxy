@@ -1,9 +1,11 @@
-use axum::routing::{get,post};
-use std::sync::{Arc,Mutex};
-use axum_cookie::prelude::*;
-use axum::{Router,ServiceExt,Extension};
 use axum::extract::Request;
+use axum::routing::{get,post};
+use axum::{Router,ServiceExt,Extension};
+use axum_cookie::prelude::*;
+use jsonwebtoken::{EncodingKey,DecodingKey};
 use sd_notify::{notify,NotifyState};
+use std::sync::{Arc,Mutex};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower::Layer;
 use tower_http::normalize_path::NormalizePathLayer;
@@ -15,7 +17,7 @@ mod p256;
 
 use crate::api::{root,test,auth,passkey};
 
-use types::{DbHandle,DbHandleExtension};
+use types::{DbHandle,PassKeyProxyState};
 
 #[tokio::main]
 pub async fn main() -> Result<(),Box<dyn std::error::Error + Send + Sync>> {
@@ -23,7 +25,14 @@ pub async fn main() -> Result<(),Box<dyn std::error::Error + Send + Sync>> {
   let _ = notify(&[NotifyState::Ready]);
 
   let db = DbHandle::open();
-  let db_ext = DbHandleExtension(Arc::new(Mutex::new(db)));
+  let secret = "hunter2";
+  let db_ext = PassKeyProxyState {
+    db_handle: Arc::new(Mutex::new(db)),
+    encoding_key: EncodingKey::from_secret(secret.as_ref()),
+    decoding_key: DecodingKey::from_secret(secret.as_ref()),
+    cookie_ttl: Duration::from_secs(3600 * 24), // how long the cookie and JWT within will last
+    jwt_auto_renew: 3600 * 23, // if the JWT will expire in 23h, renew it
+  };
 
   //logic::test_parse();
 

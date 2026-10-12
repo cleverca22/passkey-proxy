@@ -1,11 +1,11 @@
 use axum::Extension;
 use axum::extract::Json;
 use ciborium::from_reader;
-use crate::types::{DbHandleExtension,Register,RegisterReply,ClientData,Attestation};
+use crate::types::{PassKeyProxyState,Register,RegisterReply,ClientData,Attestation};
 use rusqlite::params;
 use std::io::Cursor;
 
-pub async fn route(Extension(db_ext): Extension<DbHandleExtension>, Json(payload): Json<Register>) -> Json<RegisterReply> {
+pub async fn route(Extension(db_ext): Extension<PassKeyProxyState>, Json(payload): Json<Register>) -> Json<RegisterReply> {
   println!("registering {0}", payload.id);
   println!("attached via {0}", payload.authenticator_attachment);
 
@@ -33,7 +33,7 @@ pub async fn route(Extension(db_ext): Extension<DbHandleExtension>, Json(payload
   println!("attestation parsed: {0:#?}", obj);
   println!("authenticatorData: {0}", payload.response.authenticator_data);
 
-  let db = db_ext.0.lock().unwrap();
+  let db = db_ext.db_handle.lock().unwrap();
   let mut stat = db.conn.prepare_cached("INSERT INTO passkeys (id, publicKey, publicKeyAlgorithm, attestationObject, transports) VALUES (?,?,?,?,?)").unwrap();
   stat.insert(params![
     payload.id,

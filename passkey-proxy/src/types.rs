@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _,engine::general_purpose::URL_SAFE_NO_PAD};
 use core::net::IpAddr;
+use jsonwebtoken::{EncodingKey,DecodingKey};
 use rusqlite::OptionalExtension;
 use rusqlite::types::ToSqlOutput::Owned;
 use rusqlite::types::Value::Text;
@@ -11,6 +12,7 @@ use std::fmt;
 use std::io::{Cursor, Read};
 use std::io;
 use std::sync::{Arc,Mutex};
+use std::time::Duration;
 use uuid::Uuid;
 
 #[derive(Deserialize,Debug)]
@@ -243,7 +245,13 @@ pub fn get_db() -> Connection {
 }
 
 #[derive(Clone)]
-pub struct DbHandleExtension(pub Arc<Mutex<DbHandle>>);
+pub struct PassKeyProxyState {
+  pub db_handle: Arc<Mutex<DbHandle>>,
+  pub encoding_key: EncodingKey,
+  pub decoding_key: DecodingKey,
+  pub cookie_ttl: Duration,
+  pub jwt_auto_renew: u64,
+}
 
 pub struct DbHandle {
   pub conn: Connection,
