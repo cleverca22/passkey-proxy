@@ -3,7 +3,7 @@
 // better error handling
 // better UI?
 
-const userid = Uint8Array.fromHex("cafed00d");
+const userid = Uint8Array.fromHex("deaddeaddeaddead");
 
 function tob64(buffer) {
   const arr = new Uint8Array(buffer);
@@ -67,7 +67,7 @@ async function createPasskey() {
       challenge: challenge.buffer,
       pubKeyCredParams: [
         {
-          // chrome on a pixel10 supports this one
+          // chrome on a pixel10, and trezor in fido2 mode supports this one
           alg: -7, // ES256
           type: "public-key"
         },
@@ -95,10 +95,12 @@ async function createPasskey() {
     }
   };
   try {
+    let username = document.getElementById("username");
     let credential = await navigator.credentials.create(options);
     console.log(credential);
     console.log(credential.toJSON());
     let obj = credential.toJSON();
+    obj.username = username.value;
     let str = JSON.stringify(obj);
     console.log(str);
     await asyncPost("/passkey/register", obj);

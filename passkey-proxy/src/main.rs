@@ -14,8 +14,9 @@ mod api;
 mod types;
 mod ed25519;
 mod p256;
+mod util;
 
-use crate::api::{root,test,auth,passkey};
+use crate::api::passkey;
 
 use types::{DbHandle,PassKeyProxyState};
 
@@ -37,14 +38,15 @@ pub async fn main() -> Result<(),Box<dyn std::error::Error + Send + Sync>> {
   //logic::test_parse();
 
   let app = Router::new()
-    .route("/", get(root::route))
     .route("/passkey/auth", get(passkey::auth::route))
     .route("/passkey/auth_attempt", post(passkey::auth_attempt::route))
-    .route("/passkey/gen_challenge", get(auth::gen_challenge))
-    .route("/passkey/passkey.js", get(test::js))
+    .route("/passkey/gen_challenge", get(passkey::gen_challenge::route))
+    .route("/passkey/passkey.js", get(passkey::static_files::js))
     .route("/passkey/register", post(passkey::register::route))
-    .route("/passkey/start", get(passkey::start::route))
+    .route("/passkey/", get(passkey::static_files::index))
+    .route("/passkey", get(passkey::static_files::index))
     .route("/passkey/get_all", get(passkey::get_all::route))
+    .route("/passkey/register.html", get(passkey::static_files::register))
     .layer(CookieLayer::default())
     .layer(Extension(db_ext))
     ;

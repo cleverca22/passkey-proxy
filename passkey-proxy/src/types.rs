@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _,engine::general_purpose::URL_SAFE_NO_PAD};
+use ciborium::from_reader;
 use core::net::IpAddr;
 use jsonwebtoken::{EncodingKey,DecodingKey};
 use rusqlite::OptionalExtension;
@@ -14,6 +15,11 @@ use std::io;
 use std::sync::{Arc,Mutex};
 use std::time::Duration;
 use uuid::Uuid;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenChallengeReply {
+  pub token: String
+}
 
 #[derive(Deserialize,Debug)]
 pub struct AuthenticatorAssertionResponse {
@@ -50,8 +56,8 @@ pub struct ChallengeClaims {
 #[derive(Debug)]
 pub struct AttestedCredentialData {
   pub aaguid: AaGuid,
-  pub credential_id: CredentialId,
-  pub credential_public_key: ciborium::Value,
+  pub credential_id: CredentialId, // just a duplicate of the main ID for the passkey
+  pub credential_public_key: ciborium::Value, // a duplicate of the main public_key, but in cbor form
 }
 
 #[derive(Debug)]
@@ -82,7 +88,8 @@ pub struct CredentialId(pub Vec<u8>);
 
 impl Debug for CredentialId {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let encoded = hex::encode(self.0.clone());
+    //let encoded = hex::encode(self.0.clone());
+    let encoded = BASE64_STANDARD.encode(&self.0);
     write!(f, "{}", encoded)
   }
 }
@@ -96,7 +103,7 @@ impl <'de> Deserialize<'de> for AuthData {
     D: Deserializer<'de>,
   {
     let f: Vec<u8> = Vec::deserialize(deserializer)?;
-    auth_data_from_vec(f).map_err(serde::de::Error::custom)
+    auth_data_from_vec(&f[..]).map_err(serde::de::Error::custom)
   }
 }
 
@@ -115,6 +122,12 @@ impl <'de> Deserialize<'de> for Base64Bytes {
   {
     let s = String::deserialize(deserializer)?;
     URL_SAFE_NO_PAD.decode(s).map(Base64Bytes).map_err(de::Error::custom)
+  }
+}
+
+impl Base64Bytes {
+  pub fn from_string(e: &String) -> Base64Bytes {
+    BASE64_STANDARD.decode(e).map(Base64Bytes).unwrap()
   }
 }
 
@@ -144,8 +157,8 @@ impl FromSql for Base64Bytes {
 }
 
 impl Base64Bytes {
-  pub fn get_vec(&self) -> Vec<u8> {
-    self.0.clone()
+  pub fn get_vec(&self) -> &[u8] {
+    &self.0[..]
   }
 }
 
@@ -183,6 +196,7 @@ pub struct Register {
   pub authenticator_attachment: String,
   pub id: Base64Bytes,
   pub response: AuthenticatorAttestationResponse,
+  pub username: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -238,7 +252,7 @@ impl Debug for AaGuid {
 pub fn get_db() -> Connection {
   let db = Connection::open("db.sqlite").unwrap();
   let query = "
-    CREATE TABLE IF NOT EXISTS passkeys (id, publicKey, publicKeyAlgorithm, attestationObject, transports);
+    CREATE TABLE IF NOT EXISTS passkeys (id, username NOT NULL, publicKey, publicKeyAlgorithm, attestationObject, transports, enabled bool default false);
   ";
   db.execute(query,[]).unwrap();
   db
@@ -268,24 +282,29 @@ impl DbHandle {
 
 #[derive(Debug)]
 pub struct PassKey {
+  pub username: String,
   pub public_key: Base64Bytes,
   pub public_key_algorithm: i64,
+  pub attestation: Attestation,
 }
 
 impl PassKey {
   pub fn get_by_id(id: &Base64Bytes) -> rusqlite::Result<Option<PassKey>> {
     let conn = get_db();
-    let mut stat = conn.prepare_cached("SELECT publicKey, publicKeyAlgorithm FROM passkeys WHERE id = ?").unwrap();
+    let mut stat = conn.prepare_cached("SELECT username, publicKey, publicKeyAlgorithm,attestationObject FROM passkeys WHERE id = ?").unwrap();
     stat.query_row([id], |row| {
-      let public_key: Base64Bytes = row.get(0)?;
-      let public_key_algorithm: i64 = row.get(1)?;
-      Ok(PassKey { public_key, public_key_algorithm })
+      let username: String = row.get(0)?;
+      let public_key: Base64Bytes = row.get(1)?;
+      let public_key_algorithm: i64 = row.get(2)?;
+      let att: Base64Bytes = row.get(3)?;
+      let attestation = from_reader(&att.0[..]).unwrap();
+      Ok(PassKey { username, public_key, public_key_algorithm, attestation })
     }).optional()
   }
 }
 
-pub fn auth_data_from_vec(f: Vec<u8>) -> io::Result<AuthData> {
-  let mut cursor = Cursor::new(f.clone());
+pub fn auth_data_from_vec(f: &[u8]) -> io::Result<AuthData> {
+  let mut cursor = Cursor::new(f);
   let mut hash = vec![0u8; 32];
   cursor.read_exact(&mut hash)?;
   let flags: u8 = read_u8(&mut cursor)?;

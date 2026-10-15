@@ -1,8 +1,8 @@
-use crate::types::CookieClaims;
+use axum_cookie::prelude::Cookie;
 use core::net::IpAddr;
+use crate::types::CookieClaims;
 use jsonwebtoken::{EncodingKey,Header,encode,get_current_timestamp};
 use std::time::Duration;
-use axum_cookie::prelude::Cookie;
 
 pub fn gen_new_jwt_cookie(ip: IpAddr, encoding_key: &EncodingKey, cookie_ttl: Duration) -> Cookie<'static> {
   let claims = CookieClaims {

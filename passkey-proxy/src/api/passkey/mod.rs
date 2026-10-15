@@ -1,6 +1,6 @@
 pub mod auth;
 pub mod auth_attempt;
+pub mod gen_challenge;
 pub mod get_all;
 pub mod register;
-pub mod start;
-pub mod util;
+pub mod static_files;

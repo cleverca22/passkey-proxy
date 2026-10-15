@@ -30,17 +30,19 @@ pub async fn route(Extension(db_ext): Extension<PassKeyProxyState>, Json(payload
   if cursor.position() != att_bytes.len() as u64 {
     return Json(RegisterReply { msg: Some("trailing bytes on cbor") });
   }
+  // TODO, assert that obj.attested_credential_data.credential_id match payload.id
   println!("attestation parsed: {0:#?}", obj);
   println!("authenticatorData: {0}", payload.response.authenticator_data);
 
   let db = db_ext.db_handle.lock().unwrap();
-  let mut stat = db.conn.prepare_cached("INSERT INTO passkeys (id, publicKey, publicKeyAlgorithm, attestationObject, transports) VALUES (?,?,?,?,?)").unwrap();
+  let mut stat = db.conn.prepare_cached("INSERT INTO passkeys (id, publicKey, publicKeyAlgorithm, attestationObject, transports, username) VALUES (?,?,?,?,?,?)").unwrap();
   stat.insert(params![
     payload.id,
     payload.response.public_key,
     payload.response.public_key_algorithm,
     payload.response.attestation_object,
-    payload.response.transports.join(",")
+    payload.response.transports.join(","),
+    payload.username
   ]).unwrap();
   // TODO, concat authenticator_data and sha256(client_data_json), but where is sig?
   Json(RegisterReply { msg: None })

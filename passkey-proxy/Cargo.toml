@@ -1,5 +1,5 @@
 [package]
-name = "passkey-proxy"
+name = "passkey_proxy"
 version = "0.0.1"
 edition = "2021"
 
