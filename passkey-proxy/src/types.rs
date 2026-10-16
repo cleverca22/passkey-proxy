@@ -226,20 +226,20 @@ pub struct AuthDataFlags(pub u8);
 impl Debug for AuthDataFlags {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let flags = self.0;
-    let mut s: Vec<&str> = Vec::new();
-    if flags & (1<<0) != 0 { s.push("UP"); }
-    if flags & (1<<2) != 0 { s.push("UV"); }
-    if flags & (1<<3) != 0 { s.push("BE"); }
-    if flags & (1<<4) != 0 { s.push("BS"); }
-    if flags & (1<<6) != 0 { s.push("AT"); }
-    if flags & (1<<7) != 0 { s.push("ED"); }
-    write!(f, "{}, {}", flags, s.join(","))
+    write!(f, "{}", flags)?;
+    if flags & (1<<0) != 0 { write!(f, ", UP")?; }
+    if flags & (1<<2) != 0 { write!(f, ", UV")?; }
+    if flags & (1<<3) != 0 { write!(f, ", BE")?; }
+    if flags & (1<<4) != 0 { write!(f, ", BS")?; }
+    if flags & (1<<6) != 0 { write!(f, ", AT")?; }
+    if flags & (1<<7) != 0 { write!(f, ", ED")?; }
+    Ok(())
   }
 }
 
 // https://passkeydeveloper.github.io/passkey-authenticator-aaguids/explorer/
 // d548826e-79b4-db40-a3d8-11116f7e8349 bitwarden
-pub struct AaGuid(pub Vec<u8>);
+pub struct AaGuid(pub [u8;16]);
 
 impl Debug for AaGuid {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -310,9 +310,8 @@ pub fn auth_data_from_vec(f: &[u8]) -> io::Result<AuthData> {
   let flags: u8 = read_u8(&mut cursor)?;
   let sign_count = read_be_u32(&mut cursor)?;
 
-  let attested_credential_data: Option<AttestedCredentialData>;
-  if flags & (1<<6) != 0 {
-    let mut aaguid = vec![0u8;16];
+  let attested_credential_data: Option<AttestedCredentialData> = if flags & (1<<6) != 0 {
+    let mut aaguid = [0u8;16];
     cursor.read_exact(&mut aaguid)?;
     let credential_id_len = read_be_u16(&mut cursor)?.into();
     let mut credential_id = vec![0u8; credential_id_len];
@@ -321,14 +320,14 @@ pub fn auth_data_from_vec(f: &[u8]) -> io::Result<AuthData> {
     let pk_value: ciborium::Value = ciborium::from_reader(&mut cursor)
       .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    attested_credential_data = Some(AttestedCredentialData {
-      aaguid: AaGuid(aaguid.to_vec()),
+    Some(AttestedCredentialData {
+      aaguid: AaGuid(aaguid),
       credential_id: CredentialId(credential_id.to_vec()),
       credential_public_key: pk_value,
-    });
+    })
   } else {
-    attested_credential_data = None;
-  }
+    None
+  };
   let mut rest: Vec<u8> = Vec::new();
   cursor.read_to_end(&mut rest).unwrap();
   Ok(AuthData {
@@ -341,19 +340,19 @@ pub fn auth_data_from_vec(f: &[u8]) -> io::Result<AuthData> {
 }
 
 fn read_u8<T>(cursor: &mut Cursor<T>) -> io::Result<u8> where T: AsRef<[u8]> {
-  let mut buf = vec![0u8; 1];
+  let mut buf = [0u8; 1];
   cursor.read_exact(&mut buf)?;
   Ok(buf[0])
 }
 
 fn read_be_u16<T>(cursor: &mut Cursor<T>) -> io::Result<u16> where T: AsRef<[u8]> {
-  let mut buf = vec![0u8; 2];
+  let mut buf = [0u8; 2];
   cursor.read_exact(&mut buf)?;
   Ok(u16::from_be_bytes(buf.try_into().unwrap()))
 }
 
 fn read_be_u32<T>(cursor: &mut Cursor<T>) -> io::Result<u32> where T: AsRef<[u8]> {
-  let mut buf = vec![0u8; 4];
+  let mut buf = [0u8; 4];
   cursor.read_exact(&mut buf)?;
   Ok(u32::from_be_bytes(buf.try_into().unwrap()))
 }
