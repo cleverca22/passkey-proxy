@@ -322,7 +322,7 @@ pub fn auth_data_from_vec(f: &[u8]) -> io::Result<AuthData> {
 
     Some(AttestedCredentialData {
       aaguid: AaGuid(aaguid),
-      credential_id: CredentialId(credential_id.to_vec()),
+      credential_id: CredentialId(credential_id),
       credential_public_key: pk_value,
     })
   } else {
@@ -348,11 +348,11 @@ fn read_u8<T>(cursor: &mut Cursor<T>) -> io::Result<u8> where T: AsRef<[u8]> {
 fn read_be_u16<T>(cursor: &mut Cursor<T>) -> io::Result<u16> where T: AsRef<[u8]> {
   let mut buf = [0u8; 2];
   cursor.read_exact(&mut buf)?;
-  Ok(u16::from_be_bytes(buf.try_into().unwrap()))
+  Ok(u16::from_be_bytes(buf))
 }
 
 fn read_be_u32<T>(cursor: &mut Cursor<T>) -> io::Result<u32> where T: AsRef<[u8]> {
   let mut buf = [0u8; 4];
   cursor.read_exact(&mut buf)?;
-  Ok(u32::from_be_bytes(buf.try_into().unwrap()))
+  Ok(u32::from_be_bytes(buf))
 }
